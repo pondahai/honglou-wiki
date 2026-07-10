@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from characters import CHARACTERS
 from config import BOOK_TITLE, VAULT, FACTS
 from extract_facts import call_llm
+from zh_fix import find_simplified, fix_simplified
 
 MARKER = "<!-- source: map-reduce facts -->"
 SECTION = re.compile(r"(## 生平\n).*?(\n## 出場章回)", re.S)
@@ -97,7 +98,7 @@ def make_prompt(canon, aliases, facts):
     alias_str = f"(別名:{'、'.join(aliases)})" if aliases else ""
     return (
         f"以下是從《{BOOK_TITLE}》原文逐回抽取的、關於「{canon}」{alias_str}的全部事實清單,"
-        "每條都附回數出處。請據此撰寫 wiki 條目,繁體中文、Markdown,只輸出三節:\n\n"
+        "每條都附回數出處。請據此撰寫 wiki 條目,繁體中文(正體字,嚴禁出現任何簡體字)、Markdown,只輸出三節:\n\n"
         "### 生平概述\n(2-4 段,按時間順序綜述)\n\n"
         "### 重要事蹟\n(條列,每項務必註明回數,直接取自清單)\n\n"
         "### 人物關係\n(條列:師徒、主僕、親屬、盟友、對手,只列清單中有依據的)\n\n"
@@ -128,7 +129,7 @@ def main():
         try:
             prompt = make_prompt(canon, CHARACTERS[canon], facts)
             bio = call_llm(prompt, max_tokens=4000, extra=PENALTY)
-            if is_degenerate(bio) or has_meta(bio):
+            if is_degenerate(bio) or has_meta(bio) or find_simplified(bio):
                 print("  degenerate/meta, retrying ...", flush=True)
                 bio = call_llm(prompt, max_tokens=4000, temperature=0.7, extra=PENALTY)
             if is_degenerate(bio):
@@ -138,7 +139,7 @@ def main():
                 # 保底:整行剔除仍含碎念的條目
                 bio = "\n".join(ln for ln in bio.splitlines() if not META_RE.search(ln))
                 print("  still meta, lines dropped", flush=True)
-            bio = remap_alias_links(fix_links(bio))
+            bio = fix_simplified(remap_alias_links(fix_links(bio)))
         except Exception as e:
             print(f"  FAILED {canon}: {e}", flush=True)
             continue
