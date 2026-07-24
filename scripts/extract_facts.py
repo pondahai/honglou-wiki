@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from characters import CHARACTERS
-from config import API, MODEL, BOOK_TITLE, N_CHAPTERS, RAW, FACTS
+from config import API, MODEL, BOOK_TITLE, N_CHAPTERS, RAW, FACTS, GENERIC_APPELLATIONS
 from zh_fix import fix_simplified
 from build_wiki import parse_chapters, reflow, build_alias_map
 
@@ -47,9 +47,12 @@ def make_prompt(num, title, text, present):
         "嚴格規則:\n"
         "0. 所有輸出一律使用繁體中文(正體字),嚴禁出現任何簡體字\n"
         "1. 只能根據本回正文,一個字都不可以引入正文之外的知識\n"
-        "2. 只在本回無關緊要、僅被提及名字的人物,輸出空陣列\n"
+        "2. 本回中僅被提及名字、沒有實際言行的人物,一律輸出空陣列 []。\n"
+        "   不可以寫「某某僅被提及」「未登場」「無相關情節」之類的說明句——\n"
+        "   「他本回沒做什麼」不是事實,寧可空著\n"
         "3. 事實必須是該人物「本人」的言行;別人的言行、或不確定主語是誰的,一律不寫\n"
-        "   (特別注意:正文泛稱「菩薩」「大仙」「老者」等時,先確認指的是誰,對不上的不寫)\n"
+        f"   (特別注意:正文以「{'」「'.join(GENERIC_APPELLATIONS)}」等身分泛稱代指時,\n"
+        "    同一個詞在不同場景指的是不同人,先確認指的是誰,對不上的不寫)\n"
         f"4. 只輸出 JSON,格式:{{\"人物名\": [\"事實\", ...], ...}},鍵只能是:{names}\n\n"
         f"=== 第{num}回正文 ===\n{text}"
     )
