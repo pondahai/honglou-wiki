@@ -10,6 +10,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from build_wiki import EXCLUDE_RE, build_alias_map
 from characters import CHARACTERS
 from config import BOOK_TITLE, VAULT, FACTS, RELATION_KINDS
 from extract_facts import call_llm
@@ -110,6 +111,39 @@ def remap_alias_links(bio):
     return re.sub(r"\[\[([^\]]+)\]\]", repl, bio)
 
 
+ALIAS_MAP, ALIAS_RE = build_alias_map()
+EXISTING_LINK = re.compile(r"\[\[[^\]]*\]\]")
+
+
+def autolink(bio, canon):
+    """補上人名連結:模型時常整篇忘了加 [[ ]](提示詞規則 4 形同虛設,約四分之一
+    的頁面零連結),與其反覆重試不如事後補。每行首次出現才連,已是連結的區段、
+    EXCLUDE_PHRASES 的同形處、以及人物自己的名字都跳過。"""
+    def link_line(line):
+        if line.lstrip().startswith("#"):
+            return line
+        blocked = [m.span() for m in EXISTING_LINK.finditer(line)]
+        if EXCLUDE_RE:
+            blocked += [m.span() for m in EXCLUDE_RE.finditer(line)]
+        # 本行已連過的名字不再連第二次(否則同一行會出現兩個連結)
+        linked = set(NAME.findall(line))
+
+        def repl(m):
+            word = m.group(0)
+            if any(s <= m.start() < e for s, e in blocked):
+                return word
+            target = ALIAS_MAP[word]
+            if target == canon or target in linked:
+                return word
+            linked.add(target)
+            return f"[[{target}]]" if word == target else f"[[{target}|{word}]]"
+
+        return ALIAS_RE.sub(repl, line)
+
+    # keepends 保留原本的換行,不動空行與結尾
+    return "".join(link_line(ln) for ln in bio.splitlines(keepends=True))
+
+
 def is_degenerate(bio):
     """人物關係節退化:塞入過多不同名字(名冊傾倒),或某個名字重複 >3 次(迴圈)"""
     if "### 人物關係" not in bio:  # 缺節,無關係節可退化(缺節另由 has_all_sections 檢查)
@@ -187,7 +221,29 @@ def make_prompt(canon, aliases, facts):
     )
 
 
+def relink_all():
+    """只跑 autolink 補既有生平節的連結,不呼叫 LLM(補連結上線後的一次性修補)"""
+    changed = 0
+    for page in sorted((VAULT / "人物").glob("*.md")):
+        text = page.read_text(encoding="utf-8")
+
+        def repl(m, canon=page.stem):
+            body = m.group(0)[len(m.group(1)):-len(m.group(2))]
+            return m.group(1) + autolink(body, canon) + m.group(2)
+
+        new = SECTION.sub(repl, text, count=1)
+        if new != text:
+            page.write_text(new, encoding="utf-8")
+            changed += 1
+            print(f"  relinked {page.stem}", flush=True)
+    print(f"relinked={changed}")
+
+
 def main():
+    # --relink:不重生成,只把 autolink 補到既有頁面
+    if "--relink" in sys.argv:
+        relink_all()
+        return
     # --force:連已寫過生平的人物頁一併重生成(提示詞改版後全量重跑用)
     force = "--force" in sys.argv
     if force:
@@ -221,6 +277,7 @@ def main():
                 bio = "\n".join(ln for ln in bio.splitlines() if not META_RE.search(ln))
                 print("  still meta, lines dropped", flush=True)
             bio = fix_simplified(remap_alias_links(fix_chapter_refs(fix_links(bio))))
+            bio = autolink(bio, canon)
         except Exception as e:
             print(f"  FAILED {canon}: {e}", flush=True)
             continue
