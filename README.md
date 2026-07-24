@@ -27,11 +27,16 @@
 的頁面命名(維基文庫分卷頁是
 [紅樓夢/第001回](https://zh.wikisource.org/zh-hant/紅樓夢/第001回) 這種格式)。
 
-另外兩點:
+另外幾點:
 
 - 紅樓夢沒有卷首文字,`config.PREFACE_TITLE` 設為 `None` 即可(水滸版已把卷首做成通用開關)
 - 末回回數寫作「第百二十回」(非「一百二十」),`build_wiki.py` 的 `cn2int` 本就支援
-- 人物表以賈府為中心,丫鬟僕婦眾多;與景物同形的名字(彩雲、彩霞)不收,避免誤連結
+- 人物表以賈府為中心,丫鬟僕婦眾多,且同一人多種寫法(侍書/待書、四兒/蕙香、
+  旺兒/來旺兒),別名表要收齊才不會漏連結
+- 新增 `characters.EXCLUDE_PHRASES`:少數人名與景物、官職、數字同形
+  (「霽月難逢,**彩雲**易散」「**文官**衙門」「初三**四兒**」「貓兒**狗兒**」),
+  逐一列出這些字串,`build_wiki.py` 比對到落在其中的名字就不連結、不計次。
+  這樣既能收錄彩雲、彩霞、文官、四兒、狗兒等有戲份的角色,又不會產生錯誤連結
 
 ## 處理流程
 
@@ -77,7 +82,7 @@ python scripts/build_html.py         # 4. vault → site 靜態網站(秒級)
 
 ```
 scripts/config.py     全書設定(換書改這裡)
-scripts/characters.py 人物表:正名 + 別名(換書改這裡)
+scripts/characters.py 人物表:正名 + 別名 + 同形例外(換書改這裡)
 scripts/*.py          流水線:fetch_wikisource → build_wiki → extract_facts → compose_bios → build_html
 data/honglou_raw.txt  原文純文字
 data/facts/           逐回事實清單(map 產物,生平的可查證來源)

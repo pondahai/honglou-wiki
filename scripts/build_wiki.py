@@ -9,8 +9,10 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from characters import CHARACTERS
+from characters import CHARACTERS, EXCLUDE_PHRASES
 from config import BOOK_TITLE, N_CHAPTERS, RAW, VAULT, EDITION_NOTE, HEADING, PREFACE_TITLE
+
+EXCLUDE_RE = re.compile("|".join(re.escape(p) for p in EXCLUDE_PHRASES)) if EXCLUDE_PHRASES else None
 
 CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
@@ -72,9 +74,13 @@ def build_alias_map():
 def link_paragraph(par: str, amap, pattern, seen_counter):
     """段落內每個人物只連結第一次出現;同時統計出現次數"""
     linked_in_par = set()
+    # 名字與景物/官職同形處(見 EXCLUDE_PHRASES)的字元範圍,落在其中的比對一律略過
+    blocked = [m.span() for m in EXCLUDE_RE.finditer(par)] if EXCLUDE_RE else []
 
     def repl(m):
         word = m.group(0)
+        if any(s <= m.start() < e for s, e in blocked):
+            return word
         canon = amap[word]
         seen_counter[canon] += 1
         if canon in linked_in_par:
