@@ -18,7 +18,20 @@ from zh_fix import find_simplified, fix_simplified
 MARKER = "<!-- source: map-reduce facts -->"
 SECTION = re.compile(r"(## 生平\n).*?(\n## 出場章回)", re.S)
 NAME = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
-PENALTY = {"repetition_penalty": 1.08, "presence_penalty": 0.5}
+# 取樣參數。原為 {"repetition_penalty": 1.08, "presence_penalty": 0.5},只移除前者:
+#
+# repetition_penalty 1.08 偏離官方——Qwen3.6-35B-A3B 的 model card 在思考/非思考
+# 三種模式一律建議 1.0(即不使用),故拿掉改用預設值。這是「對齊官方文件」的改動,
+# 不是實測結論:我們確實觀察過一次推理鏈暴衝(56586 字、產出 0 字),但相同設定
+# 重跑並未重現(15445 字、正常產出),那是單次離群值,不足以歸因於任何參數。
+#
+# presence_penalty 0.5 保留:它落在官方建議範圍內(一般任務 1.5、精確任務 0.0),
+# 且沒有任何可信證據支持更動(見下方警告)。
+#
+# ⚠ 本模型的 run-to-run 變異極大:同一頁同一設定,思考長度可差 3.7 倍。
+#   任何「每格跑一次」的參數比較都不可信,要調參請每格跑 3-5 次再看。
+# 註:temperature 0.2 低於官方建議的 0.6,係刻意壓低創造性,未一併更動。
+SAMPLING = {"presence_penalty": 0.5}
 
 
 META_RE = re.compile(
@@ -195,11 +208,11 @@ def main():
         print(f"composing {canon} ({len(facts)} facts) ...", flush=True)
         try:
             prompt = make_prompt(canon, CHARACTERS[canon], facts)
-            bio = call_llm(prompt, max_tokens=4000, extra=PENALTY)
+            bio = call_llm(prompt, max_tokens=4000, extra=SAMPLING)
             if (is_degenerate(bio) or has_meta(bio) or has_outside_view(bio)
                     or missing_sections(bio) or find_simplified(bio)):
                 print("  degenerate/meta/缺節, retrying ...", flush=True)
-                bio = call_llm(prompt, max_tokens=4000, temperature=0.7, extra=PENALTY)
+                bio = call_llm(prompt, max_tokens=4000, temperature=0.7, extra=SAMPLING)
             if is_degenerate(bio):
                 bio = dedupe_relations(bio)
                 print("  still degenerate, deduped", flush=True)
