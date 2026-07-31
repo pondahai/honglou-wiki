@@ -16,7 +16,8 @@ from zh_fix import fix_simplified
 from build_wiki import parse_chapters, reflow, build_alias_map
 
 
-def call_llm(prompt, max_tokens=6000, temperature=0.2, extra=None):
+def call_llm(prompt, max_tokens=6000, temperature=0.2, extra=None, return_finish=False):
+    """return_finish=True 時回傳 (內容, finish_reason);finish_reason=="length" 代表被 max_tokens 截斷。"""
     payload = {
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
@@ -28,8 +29,9 @@ def call_llm(prompt, max_tokens=6000, temperature=0.2, extra=None):
     body = json.dumps(payload).encode()
     req = urllib.request.Request(API, data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=900) as r:
-        out = json.load(r)["choices"][0]["message"]["content"]
-    return re.sub(r"<think>.*?</think>", "", out, flags=re.S).strip()
+        choice = json.load(r)["choices"][0]
+    out = re.sub(r"<think>.*?</think>", "", choice["message"]["content"], flags=re.S).strip()
+    return (out, choice.get("finish_reason")) if return_finish else out
 
 
 def parse_json(raw):

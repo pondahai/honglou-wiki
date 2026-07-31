@@ -19,6 +19,11 @@ from zh_fix import find_simplified, fix_simplified
 MARKER = "<!-- source: map-reduce facts -->"
 SECTION = re.compile(r"(## 生平\n).*?(\n## 出場章回)", re.S)
 NAME = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]")
+
+BASE_TOKENS = 8000    # 起始 budget
+MAX_TOKENS = 24000    # 重試上限;每次截斷就加倍
+ENDINGS = "。）)」』】.!?！？"  # 正常收尾的標點
+SFN = re.compile(r"(?:\s*\{\{sfn\|[^}]*\}\})+\s*$")  # 行尾出處標記,判斷收尾時先剝掉
 # 取樣參數。原為 {"repetition_penalty": 1.08, "presence_penalty": 0.5},只移除前者:
 #
 # repetition_penalty 1.08 偏離官方——Qwen3.6-35B-A3B 的 model card 在思考/非思考
@@ -239,7 +244,52 @@ def relink_all():
     print(f"relinked={changed}")
 
 
+def looks_truncated(bio):
+    """文字面的截斷徵兆:缺人物關係節(輸出在事蹟中途就斷了),
+    或事蹟節最後一條停在句中(沒有收尾標點)。
+    人物關係節的條目常以 [[名字]] 收尾、本來就沒有句號,故只看事蹟節。"""
+    if not bio.strip():
+        return True
+    head, sep, _ = bio.partition("### 人物關係")
+    if not sep:
+        return True
+    lines = [SFN.sub("", ln).rstrip() for ln in head.splitlines() if ln.strip()]
+    lines = [ln for ln in lines if ln]
+    return bool(lines) and lines[-1][-1] not in ENDINGS
+
+
+def current_bio(text):
+    """取出頁面中已生成的生平內容(不含 ## 標題與 marker)"""
+    m = SECTION.search(text)
+    return m.group(0)[len(m.group(1)):-len(m.group(2))].replace(MARKER, "").strip() if m else ""
+
+
+def generate(prompt, temperature=0.2):
+    """撞到 max_tokens 就加倍 budget 重試,避免長人物被硬切在句子中間"""
+    budget = BASE_TOKENS
+    while True:
+        bio, finish = call_llm(prompt, max_tokens=budget, temperature=temperature,
+                               extra=SAMPLING, return_finish=True)
+        if finish != "length" and not looks_truncated(bio):
+            return bio
+        if budget >= MAX_TOKENS:
+            print(f"  WARN: 仍被截斷(budget={budget}, finish={finish}),輸出可能不完整", flush=True)
+            return bio
+        budget = min(budget * 2, MAX_TOKENS)
+        print(f"  truncated (finish={finish}), retrying with max_tokens={budget} ...", flush=True)
+
+
 def main():
+    if "--redo-truncated" in sys.argv:
+        redo_truncated = True
+        sys.argv.remove("--redo-truncated")
+    else:
+        redo_truncated = False
+    only = None
+    if "--only" in sys.argv:
+        i = sys.argv.index("--only")
+        only = set(sys.argv[i + 1:])
+        del sys.argv[i:]
     # --relink:不重生成,只把 autolink 補到既有頁面
     if "--relink" in sys.argv:
         relink_all()
@@ -253,22 +303,26 @@ def main():
     ranked = sorted(per_char, key=lambda c: -len(per_char[c]))[:limit]
     done = skipped = 0
     for canon in ranked:
+        if only is not None and canon not in only:
+            continue
         page = VAULT / "人物" / f"{canon}.md"
         if not page.exists():
             continue
         text = page.read_text(encoding="utf-8")
-        if MARKER in text and not force:
-            skipped += 1
-            continue
+        if MARKER in text and not force and only is None:
+            if not (redo_truncated and looks_truncated(current_bio(text))):
+                skipped += 1
+                continue
+            print(f"  {canon}: 偵測到截斷,重新生成", flush=True)
         facts = per_char[canon]
         print(f"composing {canon} ({len(facts)} facts) ...", flush=True)
         try:
             prompt = make_prompt(canon, CHARACTERS[canon], facts)
-            bio = call_llm(prompt, max_tokens=4000, extra=SAMPLING)
+            bio = generate(prompt)
             if (is_degenerate(bio) or has_meta(bio) or has_outside_view(bio)
                     or missing_sections(bio) or find_simplified(bio)):
                 print("  degenerate/meta/缺節, retrying ...", flush=True)
-                bio = call_llm(prompt, max_tokens=4000, temperature=0.7, extra=SAMPLING)
+                bio = generate(prompt, temperature=0.7)
             if is_degenerate(bio):
                 bio = dedupe_relations(bio)
                 print("  still degenerate, deduped", flush=True)
